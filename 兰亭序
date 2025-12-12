@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cyber Landscape: Omni-Control</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000000; font-family: 'Segoe UI', sans-serif; cursor: grab; }
+        body.grabbing { cursor: grabbing; }
+        canvas { display: block; }
+
+        /* --- UI 容器与折叠逻辑 --- */
+        #ui-layer {
+            position: absolute; top: 20px; left: 20px; z-index: 100;
+            transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        #ui-layer.collapsed { transform: translateX(-280px); }
+
+        /* --- 触发折叠的按钮 --- */
+        #toggle-ui {
+            position: absolute; top: 0; right: -40px; width: 30px; height: 30px;
+            background: rgba(0,0,0,0.8); border: 1px solid #00ffff; color: #00ffff;
+            text-align: center; line-height: 30px; cursor: pointer; border-radius: 4px;
+            pointer-events: auto;
+        }
+
+        /* --- 面板样式 --- */
+        .panel {
+            background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(12px);
+            padding: 15px; border-radius: 6px; border: 1px solid rgba(0, 255, 255, 0.3);
+            color: #eee; width: 260px; pointer-events: auto;
+            box-shadow: 0 0 25px rgba(0,0,0,0.6);
+        }
+
+        h1 {
+            margin: 0 0 10px 0; font-size: 16px; letter-spacing: 2px;
+            text-transform: uppercase; color: #00ffff; text-align: center;
+            border-bottom: 1px solid rgba(0, 255, 255, 0.2); padding-bottom: 8px;
+            text-shadow: 0 0 8px rgba(0, 255, 255, 0.6);
+        }
+
+        /* --- 控件通用样式 --- */
+        .control-group { margin-bottom: 10px; border-top: 1px dashed rgba(255,255,255,0.1); padding-top: 8px; }
+        .control-label { font-size: 11px; color: #aaa; margin-bottom: 4px; display: block; }
+        
+        button, .file-label {
+            width: 100%; padding: 8px; background: rgba(0, 255, 255, 0.05);
+            border: 1px solid #00ffff; color: #00ffff;
+            cursor: pointer; font-size: 12px; transition: all 0.2s;
+            text-transform: uppercase; letter-spacing: 1px;
+            margin-bottom: 6px; display: block; text-align: center;
+            box-sizing: border-box; border-radius: 4px;
+        }
+        button:hover, .file-label:hover { background: rgba(0, 255, 255, 0.25); box-shadow: 0 0 10px rgba(0,255,255,0.3); }
+        button:active { transform: scale(0.98); }
+        input[type="file"] { display: none; }
+
+        /* --- 颜色选择器组 --- */
+        .color-row { display: flex; justify-content: space-between; margin-bottom: 4px; align-items: center; }
+        .color-row span { font-size: 12px; color: #ddd; }
+        input[type="color"] {
+            border: none; width: 40px; height: 25px; cursor: pointer; background: none; padding: 0;
+        }
+
+        /* --- 摄像头小窗 --- */
+        #cam-container {
+            position: absolute; bottom: 20px; right: 20px;
+            width: 140px; height: 105px; z-index: 50;
+            border: 1px solid #444; background: #000;
+            border-radius: 4px; overflow: hidden;
+            transform: scaleX(-1); opacity: 0.6; transition: opacity 0.3s;
+        }
+        #cam-container:hover { opacity: 1; border-color: #00ffff; }
+        #cam-video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0.5; }
+        #output-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 6; }
+        
+        #audio-tip { font-size: 10px; color: #00fff7; text-align: center; margin-bottom: 5px; opacity: 0; transition: opacity 0.5s; height: 14px;}
+        #status-text { font-size: 12px; color: #aaa; text-align: center; display: block; margin-bottom: 5px;}
+    </style>
+
+    <!-- 依赖库 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <div id="ui-layer">
+        <div id="toggle-ui">☰</div>
+        <div class="panel">
+            <h1>Cyber Control</h1>
+            <span id="status-text">系统就绪</span>
+            <div id="audio-tip"></div>
+            
+            <!-- 音频部分 -->
+            <div class="control-group">
+                <span class="control-label">音频源 (AUDIO SOURCE)</span>
+                <label for="audio-upload" class="file-label">📂 导入音乐 (MP3)</label>
+                <input type="file" id="audio-upload" accept="audio/*">
+                <button id="play-btn">▶ 播放 / ⏸ 暂停</button>
+            </div>
+
+            <!-- 视觉与交互 -->
+            <div class="control-group">
+                <span class="control-label">视觉风格 (VISUAL STYLE)</span>
+                <div class="color-row">
+                    <span>河流色 (River)</span>
+                    <input type="color" id="col-river" value="#FFD700">
+                </div>
+                <div class="color-row">
+                    <span>山脚色 (Base)</span>
+                    <input type="color" id="col-base" value="#0b1026">
+                </div>
+                <div class="color-row">
+                    <span>山顶色 (Top)</span>
+                    <input type="color" id="col-top" value="#00ffff">
+                </div>
+            </div>
+
+            <!-- 视角控制 -->
+            <div class="control-group">
+                <button id="reset-view-btn">⟲ 复位视角 (Reset View)</button>
+                <button id="fs-btn">⛶ 沉浸模式 (Fullscreen)</button>
+            </div>
+            
+            <div style="font-size:10px; color:#555; text-align:center; margin-top:5px;">
+                拖拽旋转 • 滚轮缩放<br>手势: 控制整体增益
+            </div>
+        </div>
+    </div>
+
+    <div id="cam-container">
+        <video id="cam-video" playsinline muted autoplay></video>
+        <canvas id="output-canvas"></canvas>
+    </div>
+
+    <script>
+        // ================= 全局配置 =================
+        const CONFIG = {
+            particleCount: 350000, 
+            rangeX: 120,          
+            rangeZ: 140,           
+            lineCount: 400,        
+            // 初始颜色
+            colorRiver: new THREE.Color('#FFD700'), 
+            colorMtBase: new THREE.Color('#0b1026'), 
+            colorMtTop: new THREE.Color('#00ffff'),
+            
+            // 物理
+            rotationDamping: 0.05,
+            autoSpinSpeed: 0.0015
+        };
+
+        // ================= 1. Three.js 场景初始化 =================
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color('#000000');
+        scene.fog = new THREE.FogExp2(0x000000, 0.015);
+
+        const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 500);
+        // 初始相机位置
+        const camStartPos = new THREE.Vector3(0, 15, 45);
+        camera.position.copy(camStartPos);
+        camera.lookAt(0, 0, -10);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+        document.body.appendChild(renderer.domElement);
+
+        // 创建一个 pivot 容器来旋转整个世界，而保持相机逻辑简单
+        const pivot = new THREE.Group();
+        scene.add(pivot);
+
+        // ================= 2. 交互逻辑 (拖拽旋转) =================
+        // 状态变量
+        let isDragging = false;
+        let isUserInteracted = false; // 是否手动操作过
+        let mouse = { x: 0, y: 0 };
+        let targetRotation = { x: 0, y: 0 };
+        let currentRotation = { x: 0, y: 0 };
+
+        const canvasDOM = renderer.domElement;
+
+        // 鼠标按下
+        canvasDOM.addEventListener('mousedown', e => {
+            isDragging = true;
+            isUserInteracted = true;
+            document.body.classList.add('grabbing');
+            mouse.x = e.clientX;
+            mouse.y = e.clientY;
+        });
+
+        // 鼠标移动
+        window.addEventListener('mousemove', e => {
+            if (!isDragging) return;
+            const dx = e.clientX - mouse.x;
+            const dy = e.clientY - mouse.y;
+            mouse.x = e.clientX;
+            mouse.y = e.clientY;
+
+            // 更新目标角度
+            targetRotation.y += dx * 0.003;
+            targetRotation.x += dy * 0.003;
+
+            // 限制俯仰角 (避免转到地底下)
+            targetRotation.x = Math.max(-0.2, Math.min(0.6, targetRotation.x));
+        });
+
+        // 鼠标抬起
+        window.addEventListener('mouseup', () => {
+            isDragging = false;
+            document.body.classList.remove('grabbing');
+        });
+
+        // 触摸支持
+        canvasDOM.addEventListener('touchstart', e => {
+            if (e.touches.length === 1) {
+                isDragging = true;
+                isUserInteracted = true;
+                mouse.x = e.touches[0].clientX;
+                mouse.y = e.touches[0].clientY;
+            }
+        }, {passive: false});
+
+        canvasDOM.addEventListener('touchmove', e => {
+            if (isDragging && e.touches.length === 1) {
+                e.preventDefault();
+                const dx = e.touches[0].clientX - mouse.x;
+                const dy = e.touches[0].clientY - mouse.y;
+                mouse.x = e.touches[0].clientX;
+                mouse.y = e.touches[0].clientY;
+                targetRotation.y += dx * 0.005;
+                targetRotation.x += dy * 0.005;
+                targetRotation.x = Math.max(-0.2, Math.min(0.6, targetRotation.x));
+            }
+        }, {passive: false});
+        
+        canvasDOM.addEventListener('touchend', () => isDragging = false);
+
+        // ================= 3. 粒子系统 (几何与Shader) =================
+        // 这里复用之前调整好的高质量 Shader 逻辑
+        const geometry = new THREE.BufferGeometry();
+        const positions = [];
+        const randoms = [];
+        const lineIndices = [];
+        const pointsPerLine = Math.floor(CONFIG.particleCount / CONFIG.lineCount);
+
+        for (let i = 0; i < CONFIG.lineCount; i++) {
+            const z = (i / CONFIG.lineCount - 0.5) * CONFIG.rangeZ;
+            for (let j = 0; j < pointsPerLine; j++) {
+                const x = (j / pointsPerLine - 0.5) * CONFIG.rangeX;
+                positions.push(x, 0, z);
+                randoms.push(Math.random(), Math.random(), Math.random());
+                lineIndices.push(i / CONFIG.lineCount);
+            }
+        }
+        // 尘埃
+        for(let i=0; i<20000; i++) {
+            positions.push((Math.random()-0.5)*CONFIG.rangeX, Math.random()*30+10, (Math.random()-0.5)*CONFIG.rangeZ);
+            randoms.push(Math.random(), Math.random(), Math.random());
+            lineIndices.push(-1.0); 
+        }
+
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        geometry.setAttribute('aRandom', new THREE.Float32BufferAttribute(randoms, 3));
+        geometry.setAttribute('aLine', new THREE.Float32BufferAttribute(lineIndices, 1));
+
+        const uniforms = {
+            uTime: { value: 0 },
+            uScale: { value: 0.0 },
+            uAudioLow: { value: 0.0 },
+            uAudioMid: { value: 0.0 },
+            uAudioHigh: { value: 0.0 },
+            uAudioAvg: { value: 0.0 },
+            uColorRiver: { value: CONFIG.colorRiver },
+            uColorMtBase: { value: CONFIG.colorMtBase },
+            uColorMtTop: { value: CONFIG.colorMtTop }
+        };
+
+        const material = new THREE.ShaderMaterial({
+            vertexShader: `
+            uniform float uTime;
+            uniform float uScale;       
+            uniform float uAudioLow;
+            uniform float uAudioMid;
+            uniform float uAudioHigh;
+            attribute vec3 aRandom;
+            attribute float aLine;
+            varying float vType;
+            varying float vHeight;
+            varying float vIntensity;
+
+            // Simplex Noise Utility
+            vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec2 mod289(vec2 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+            vec3 permute(vec3 x) { return mod289(((x*34.0)+1.0)*x); }
+            float snoise(vec2 v) {
+                const vec4 C = vec4(0.211324865405187, 0.366025403784439, -0.577350269189626, 0.024390243902439);
+                vec2 i  = floor(v + dot(v, C.yy) );
+                vec2 x0 = v - i + dot(i, C.xx);
+                vec2 i1; i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+                vec4 x12 = x0.xyxy + C.xxzz; x12.xy -= i1;
+                i = mod289(i);
+                vec3 p = permute( permute( i.y + vec3(0.0, i1.y, 1.0 )) + i.x + vec3(0.0, i1.x, 1.0 ));
+                vec3 m = max(0.5 - vec3(dot(x0,x0), dot(x12.xy,x12.xy), dot(x12.zw,x12.zw)), 0.0);
+                m = m*m ; m = m*m ;
+                vec3 x = 2.0 * fract(p * C.www) - 1.0;
+                vec3 h = abs(x) - 0.5;
+                vec3 ox = floor(x + 0.5);
+                vec3 a0 = x - ox;
+                m *= 1.79284291400159 - 0.85373472095314 * ( a0*a0 + h*h );
+                vec3 g;
+                g.x  = a0.x  * x0.x  + h.x  * x0.y;
+                g.yz = a0.yz * x12.xz + h.yz * x12.yw;
+                return 130.0 * dot(m, g);
+            }
+
+            void main() {
+                vec3 pos = position;
+                
+                // Dust
+                if (aLine < -0.5) {
+                    vType = 3.0;
+                    float t = uTime * 0.15 + aRandom.x * 20.0;
+                    pos.x += sin(t) * 3.0;
+                    pos.z += cos(t * 0.8) * 3.0;
+                    pos.y += sin(t * 1.2) * 1.5;
+                    vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+                    gl_Position = projectionMatrix * mvPosition;
+                    gl_PointSize = (2.5 + aRandom.y) * (30.0 / -mvPosition.z);
+                    vIntensity = 0.5 + 0.3 * sin(uTime + aRandom.z * 10.0);
+                    return;
+                }
+
+                float riverCurve = sin(pos.z * 0.06) * 14.0 + sin(pos.z * 0.15) * 5.0;
+                float distToRiver = abs(pos.x - riverCurve);
+                float voidWidth = 10.0 + (1.0 - uScale) * 5.0;
+
+                float height = 0.0;
+                float pointSize = 0.0;
+                vIntensity = 0.8;
+
+                if (distToRiver < 3.5) {
+                    vType = 0.0;
+                    float zNormal = clamp((pos.z + 70.0) / 140.0, 0.0, 1.0);
+                    float wLow = 1.0 - smoothstep(0.0, 0.4, zNormal);
+                    float wMid = 1.0 - abs(zNormal - 0.5) * 2.0; wMid = max(0.0, wMid);
+                    float wHigh = smoothstep(0.6, 1.0, zNormal);
+                    float localAudio = wLow * uAudioLow + wMid * uAudioMid + wHigh * uAudioHigh;
+                    
+                    float flowBase = snoise(vec2(pos.x * 0.4, pos.z * 0.15 - uTime * 0.3)); 
+                    float flowRipple = snoise(vec2(pos.x * 0.8, pos.z * 0.3 - uTime * 0.8));
+                    
+                    height = flowBase * 0.8 + flowRipple * pow(localAudio, 1.2) * 2.0;
+                    pointSize = 3.5 * (1.0 - distToRiver / 4.0);
+                    vIntensity = 0.7 + localAudio * 1.5;
+                }
+                else if (distToRiver < voidWidth) {
+                    vType = 2.0; pointSize = 0.0;
+                }
+                else {
+                    vType = 1.0;
+                    float mDist = distToRiver - voidWidth;
+                    float n1 = snoise(vec2(pos.x * 0.05, pos.z * 0.08));
+                    float n2 = snoise(vec2(pos.x * 0.15, pos.z * 0.15));
+                    float baseHeight = (abs(n1) * 15.0 + n2 * 5.0) * (mDist * 0.08);
+                    
+                    float centerDist = length(vec2(pos.x, pos.z));
+                    float wavePhase = centerDist * 0.15 - uTime * 0.8;
+                    float energyWave = sin(wavePhase) * 0.5 + 0.5; energyWave = pow(energyWave, 6.0);
+                    float ringAmplitude = uAudioLow * 12.0 * exp(-centerDist * 0.015);
+                    
+                    height = baseHeight + ringAmplitude * energyWave;
+                    height *= (0.8 + uScale);
+                    height = clamp(height, 0.0, 40.0);
+                    
+                    pointSize = 1.5 + height * 0.06;
+                    float linePattern = sin(aLine * 250.0);
+                    if (linePattern > 0.9) {
+                        pointSize *= 1.3;
+                        vIntensity = 1.3 + energyWave * uAudioLow; 
+                    } else {
+                        vIntensity = 0.8 + energyWave * uAudioLow * 0.5;
+                    }
+                }
+                pos.y = height;
+                vHeight = height;
+                vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+                gl_Position = projectionMatrix * mvPosition;
+                gl_PointSize = pointSize * (50.0 / -mvPosition.z);
+            }
+            `,
+            fragmentShader: `
+            uniform vec3 uColorRiver;
+            uniform vec3 uColorMtBase;
+            uniform vec3 uColorMtTop;
+            varying float vType;
+            varying float vHeight;
+            varying float vIntensity;
+
+            void main() {
+                if (vType > 1.5 && vType < 2.5) discard;
+                vec2 uv = gl_PointCoord.xy - 0.5;
+                if (length(uv) > 0.5) discard;
+                float alpha = smoothstep(0.5, 0.2, length(uv));
+
+                vec3 color = vec3(0.0);
+                if (vType < 0.5) {
+                    color = uColorRiver * vIntensity; 
+                    color += vec3(0.3) * (vIntensity - 0.5);
+                } else if (vType > 2.5) {
+                    color = vec3(0.8, 0.9, 1.0);
+                    alpha *= 0.7; color *= vIntensity;
+                } else {
+                    float hFactor = clamp(vHeight / 35.0, 0.0, 1.0);
+                    color = mix(uColorMtBase, uColorMtTop, hFactor);
+                    color *= vIntensity;
+                    if (hFactor > 0.9) color += vec3(0.4); 
+                }
+                gl_FragColor = vec4(color, alpha);
+            }
+            `,
+            uniforms: uniforms,
+            transparent: true,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending
+        });
+
+        const particleSystem = new THREE.Points(geometry, material);
+        pivot.add(particleSystem); // 注意：加到 pivot 里，而不是 scene
+
+        // ================= 4. UI 逻辑与功能实现 =================
+        
+        // 4.1 颜色更改
+        const colRiverIn = document.getElementById('col-river');
+        const colBaseIn = document.getElementById('col-base');
+        const colTopIn = document.getElementById('col-top');
+
+        colRiverIn.addEventListener('input', (e) => uniforms.uColorRiver.value.set(e.target.value));
+        colBaseIn.addEventListener('input', (e) => uniforms.uColorMtBase.value.set(e.target.value));
+        colTopIn.addEventListener('input', (e) => uniforms.uColorMtTop.value.set(e.target.value));
+
+        // 4.2 视角复位
+        const btnReset = document.getElementById('reset-view-btn');
+        btnReset.addEventListener('click', () => {
+            isUserInteracted = false;
+            // 目标角度归零
+            targetRotation.x = 0;
+            targetRotation.y = 0;
+            // 如果你希望复位瞬间回到正对，可以把current也设为0，
+            // 这里我们用平滑复位，不强制设currentRotation
+        });
+
+        // 4.3 折叠面板
+        const toggleBtn = document.getElementById('toggle-ui');
+        const uiLayer = document.getElementById('ui-layer');
+        let isCollapsed = false;
+        toggleBtn.addEventListener('click', () => {
+            isCollapsed = !isCollapsed;
+            if(isCollapsed) {
+                uiLayer.classList.add('collapsed');
+                toggleBtn.innerText = '⚙';
+            } else {
+                uiLayer.classList.remove('collapsed');
+                toggleBtn.innerText = '☰';
+            }
+        });
+
+        // 4.4 全屏与状态显示
+        const statusText = document.getElementById('status-text');
+        const btnFs = document.getElementById('fs-btn');
+        btnFs.addEventListener('click', () => {
+             if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+             else document.exitFullscreen();
+        });
+
+        // ================= 5. 音频系统 (极致平滑) =================
+        let audioCtx, audioAnalyser, audioEl;
+        let audioDataArray; 
+        
+        function initAudio() {
+            if (audioCtx) return; 
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            audioCtx = new AudioContext();
+            audioAnalyser = audioCtx.createAnalyser();
+            audioAnalyser.fftSize = 512; 
+            audioAnalyser.smoothingTimeConstant = 0.9; // 极高平滑
+            
+            audioDataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
+            
+            audioEl = new Audio();
+            audioEl.crossOrigin = "anonymous";
+            audioEl.loop = true;
+
+            const audioSource = audioCtx.createMediaElementSource(audioEl);
+            audioSource.connect(audioAnalyser);
+            audioAnalyser.connect(audioCtx.destination);
+        }
+
+        // JS 端插值变量
+        let curLow=0, curMid=0, curHigh=0;
+
+        function updateAudioData() {
+            if (!audioAnalyser) return;
+            audioAnalyser.getByteFrequencyData(audioDataArray);
+            
+            let bassSum=0, midSum=0, highSum=0;
+            for(let i=0; i<10; i++) bassSum+=audioDataArray[i];
+            for(let i=10; i<80; i++) midSum+=audioDataArray[i];
+            for(let i=80; i<200; i++) highSum+=audioDataArray[i];
+            
+            let targetLow = bassSum/(10*255);
+            let targetMid = midSum/(70*255);
+            let targetHigh = highSum/(120*255);
+            
+            curLow += (targetLow - curLow) * 0.06;
+            curMid += (targetMid - curMid) * 0.06;
+            curHigh += (targetHigh - curHigh) * 0.06;
+            
+            uniforms.uAudioLow.value = curLow;
+            uniforms.uAudioMid.value = curMid;
+            uniforms.uAudioHigh.value = curHigh;
+            uniforms.uAudioAvg.value = (curLow + curMid + curHigh) / 3.0;
+        }
+
+        // 音频播放控制
+        function togglePlay() {
+            if(!audioCtx) initAudio();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            if(audioEl.paused) { 
+                audioEl.play().then(() => showTip("▶ 播放中")); 
+            } else { 
+                audioEl.pause(); showTip("⏸ 已暂停"); 
+            }
+        }
+        function loadLocalAudio(file) {
+            if(!file) return;
+            const url = URL.createObjectURL(file);
+            if(!audioCtx) initAudio();
+            audioEl.src = url;
+            audioEl.play().then(() => showTip("🎵: " + file.name));
+        }
+        function showTip(text) {
+            const el = document.getElementById('audio-tip');
+            el.innerText = text; el.style.opacity = 1; 
+            setTimeout(() => el.style.opacity = 0, 3000);
+        }
+        document.getElementById('audio-upload').onchange = (e) => loadLocalAudio(e.target.files[0]);
+        document.getElementById('play-btn').onclick = togglePlay;
+
+        // ================= 6. MediaPipe 手势 =================
+        // 为了提高帧率，降低 MediaPipe 调用频率或计算量是常见的优化手段
+        // 这里保持 100% 运行，如果卡顿可以限制处理频率
+        let targetScale = 0.2;
+        let currentScale = 0.2;
+        let isHandActive = false;
+        let handLostFrames = 0;
+
+        const videoElement = document.getElementById('cam-video');
+        const canvasElement = document.getElementById('output-canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+
+        function onResults(results) {
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                isHandActive = true;
+                statusText.innerText = "手势交互中";
+                for (const landmarks of results.multiHandLandmarks) {
+                    drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: 'rgba(0,255,255,0.3)', lineWidth: 1});
+                    
+                    const wrist = landmarks[0];
+                    const middleTip = landmarks[12];
+                    const distance = Math.sqrt(Math.pow(wrist.x - middleTip.x, 2) + Math.pow(wrist.y - middleTip.y, 2));
+                    let val = (distance - 0.1) * 2.5;
+                    targetScale = Math.max(0.0, Math.min(1.0, val));
+                }
+            } else {
+                isHandActive = false;
+                statusText.innerText = "等待交互...";
+            }
+            canvasCtx.restore();
+        }
+
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        hands.setOptions({maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5});
+        hands.onResults(onResults);
+        const cameraUtils = new Camera(videoElement, {
+            onFrame: async () => {
+                if(canvasElement.width !== videoElement.videoWidth) {
+                    canvasElement.width = videoElement.videoWidth || 160;
+                    canvasElement.height = videoElement.videoHeight || 120;
+                }
+                await hands.send({image: videoElement});
+            }, width: 320, height: 240
+        });
+        cameraUtils.start();
+
+        // ================= 7. 渲染主循环 =================
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const t = clock.getElapsedTime();
+            
+            updateAudioData();
+
+            // 手势数值处理
+            if (!isHandActive) {
+                handLostFrames++;
+                // 没手的时候微微呼吸
+                if (handLostFrames > 20) targetScale = 0.2 + Math.sin(t * 0.4) * 0.05; 
+            } else {
+                handLostFrames = 0;
+            }
+            currentScale += (targetScale - currentScale) * 0.05;
+            uniforms.uScale.value = currentScale;
+            uniforms.uTime.value = t;
+
+            // 视角旋转控制
+            // 逻辑：如果没在拖拽，且用户已介入过，就保持当前角度。
+            // 如果用户点了复位(isUserInteracted=false)，则自动慢速自转
+            
+            if (!isDragging && !isUserInteracted) {
+                // 自动模式：缓慢旋转Y轴
+                targetRotation.y += CONFIG.autoSpinSpeed;
+                // 自动复位X轴倾角
+                targetRotation.x = targetRotation.x * 0.95; 
+            } else if (!isDragging && isUserInteracted) {
+                // 固定模式：在用户松手的位置，虽然不再接受鼠标增量，但继续应用 target->current 的阻尼运动，保持不动
+                // 如果你想让它有惯性，可以添加 momentum 逻辑，这里只做简单的固定
+                targetRotation.y += CONFIG.autoSpinSpeed * 0.1; // 极慢漂移，避免死板
+            }
+
+            // 平滑阻尼插值 (Smoothing)
+            currentRotation.x += (targetRotation.x - currentRotation.x) * CONFIG.rotationDamping;
+            currentRotation.y += (targetRotation.y - currentRotation.y) * CONFIG.rotationDamping;
+
+            pivot.rotation.x = currentRotation.x;
+            pivot.rotation.y = currentRotation.y;
+
+            renderer.render(scene, camera);
+        }
+        animate();
+        
+        // Resize handle
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+    </script>
+</body>
+</html>
