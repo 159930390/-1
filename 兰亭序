@@ -1,0 +1,1090 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Zen AR: Ultimate Interactive</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Segoe UI', sans-serif; }
+        canvas { display: block; }
+        
+        #ui-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none;
+            z-index: 10;
+        }
+
+        /* 伸缩面板容器 */
+        #controls-container {
+            position: absolute; top: 20px; right: 20px;
+            width: 280px; pointer-events: auto;
+            transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        
+        /* 收起状态 */
+        #controls-container.collapsed {
+            transform: translateX(calc(100% - 12px)); /* 修正：更小的偏移量，确保按钮可见 */
+        }
+
+        /* 独立的触发按钮（始终固定在右侧） */
+        #toggle-btn {
+            position: absolute; top: 20px; right: 20px;
+            width: 32px; height: 32px;
+            background: rgba(10, 20, 30, 0.9);
+            border: 1px solid #00ffff;
+            border-radius: 4px;
+            color: #00ffff; font-size: 16px; font-weight: bold;
+            cursor: pointer; display: flex; align-items: center; justify-content: center;
+            backdrop-filter: blur(5px);
+            transition: all 0.3s ease;
+            z-index: 11;
+            pointer-events: auto;
+        }
+        
+        /* 当面板收起时，按钮需要左移，避免被面板遮住 */
+        #controls-container.collapsed ~ #toggle-btn {
+            right: calc(280px - 12px); /* 面板宽度 - 按钮露出的部分 */
+        }
+        
+        #toggle-btn:hover {
+            background: rgba(0, 255, 255, 0.2);
+            transform: scale(1.1);
+        }
+
+        #controls {
+            background: rgba(8, 10, 14, 0.95);
+            backdrop-filter: blur(12px);
+            padding: 20px; border-radius: 4px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-top: 2px solid #00ffff;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.8);
+            max-height: 85vh; overflow-y: auto;
+            pointer-events: auto;
+        }
+
+        /* 滚动条美化 */
+        #controls::-webkit-scrollbar { width: 4px; }
+        #controls::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+
+        .header { 
+            font-size: 12px; color: #00ffff; letter-spacing: 2px; text-transform: uppercase; font-weight: 800; 
+            border-bottom: 1px solid rgba(0,255,255,0.2); padding-bottom:10px; margin-bottom: 15px; 
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        
+        .label { font-size: 10px; color: #77aacc; margin-bottom: 3px; letter-spacing: 0.5px; font-weight: 600; text-transform:uppercase; display: block; }
+        
+        /* Color Inputs */
+        .color-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 15px; }
+        .color-item { display: flex; flex-direction: column; }
+        input[type=color] { 
+            width: 100%; height: 28px; border: 1px solid rgba(255,255,255,0.1); 
+            background: #111; cursor: pointer; border-radius: 2px; padding: 2px; outline:none;
+            transition: border 0.2s ease;
+        }
+        input[type=color]:hover { border: 1px solid rgba(0, 255, 255, 0.5); }
+
+        /* Buttons */
+        .btn-main {
+            background: linear-gradient(90deg, rgba(0,255,255,0.05) 0%, rgba(0,255,255,0) 100%);
+            border: 1px solid rgba(0, 255, 255, 0.2);
+            color: #ccffff; padding: 10px; width: 100%; margin-top: 8px;
+            text-transform: uppercase; font-size: 10px; letter-spacing: 1px;
+            cursor: pointer; transition: all 0.3s ease;
+            border-radius: 2px;
+        }
+        .btn-main:hover { 
+            background: rgba(0, 255, 255, 0.2); 
+            border-color: #00ffff;
+            transform: translateY(-1px);
+            box-shadow: 0 5px 15px rgba(0,255,255,0.2);
+        }
+
+        #file-input { display: none; }
+        #loader {
+            position: absolute; 
+            top: 50%; left: 50%; 
+            transform: translate(-50%, -50%);
+            color: #00ffff; 
+            font-size: 12px; 
+            letter-spacing: 4px; 
+            pointer-events: none;
+            text-shadow: 0 0 20px #00ffff;
+            text-align: center;
+            z-index: 100;
+            background: rgba(0,0,0,0.8);
+            padding: 30px 40px;
+            border-radius: 8px;
+            border: 1px solid rgba(0,255,255,0.3);
+        }
+        
+        #hand-status {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            color: #00ffff;
+            font-size: 11px;
+            background: rgba(0,0,0,0.5);
+            padding: 5px 10px;
+            border-radius: 4px;
+            border: 1px solid rgba(0,255,255,0.2);
+        }
+        
+        .input_video { 
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            width: 160px;
+            height: 120px;
+            opacity: 0.8;
+            border-radius: 4px;
+            border: 1px solid rgba(0,255,255,0.3);
+            display: block !important;
+            transform: scaleX(-1);
+        }
+    </style>
+    
+    <script type="importmap">
+        { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+    <div id="loader">SYSTEM INITIALIZING...</div>
+    <video class="input_video" playsinline></video>
+    <div id="hand-status">Hand: Initializing...</div>
+
+    <div id="ui-layer">
+        <!-- 独立的触发按钮，始终在右侧可见 -->
+        <button id="toggle-btn">+</button>
+        
+        <!-- 控制面板容器 -->
+        <div id="controls-container" class="collapsed">
+            <div id="controls">
+                <div class="header">
+                    <span>Scene Controls</span>
+                    <span style="font-size:9px; color:#555">v3.0</span>
+                </div>
+                
+                <span class="label">Particle Colors</span>
+                <div class="color-grid">
+                    <div class="color-item"><span class="label">Forest</span><input type="color" id="c-forest" value="#aaddff"></div>
+                    <div class="color-item"><span class="label">River</span><input type="color" id="c-river" value="#fde803"></div>
+                    <div class="color-item"><span class="label">Pavilion</span><input type="color" id="c-pavilion" value="#00ffff"></div>
+                    <div class="color-item"><span class="label">Bridge</span><input type="color" id="c-bridge" value="#00ffff"></div>
+                    <div class="color-item"><span class="label">Stone</span><input type="color" id="c-stone" value="#88aaff"></div>
+                </div>
+
+                <div class="color-item" style="margin-bottom:15px">
+                     <span class="label">Size Adjust</span>
+                     <input type="range" id="size-range" min="0.5" max="3.0" step="0.1" value="2.0" style="width:100%; accent-color:#00ffff; background:#333; height:2px;">
+                </div>
+
+                <button class="btn-main" id="btnMusic">♫ Import MP3 Music</button>
+                <input type="file" id="file-input" accept="audio/mp3,audio/*">
+                <button class="btn-main" id="btnReset">⟲ Reset & Auto-Spin</button>
+                <button class="btn-main" id="btnFullscreen">⛶ Toggle Fullscreen</button>
+                
+                <div style="font-size:9px; color:#555; text-align:center; margin-top:12px; line-height:1.4">
+                    MOUSE DOWN / SHOW HAND TO CONTROL VIEW<br>
+                    RELEASE TO RESUME ORBIT
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+
+        // --- Configuration ---
+        const CONFIG = {
+            colForest: new THREE.Color('#aaddff'),
+            colRiver: new THREE.Color('#fde803'),
+            colPavilion: new THREE.Color('#00ffff'),
+            colBridge: new THREE.Color('#00ffff'),
+            colStone: new THREE.Color('#88aaff'),
+            autoSpeed: 0.001, // Auto rotation speed
+            maxZoom: 80,
+            minZoom: 25
+        };
+
+        let scene, camera, renderer;
+        let mainMat, riverMat, forestGen;
+        let audioCtx, analyser, dataArr, audioLevel = 0;
+        let audioSource = null;
+        let time = 0;
+
+        // --- Interaction Logic Vars ---
+        const target = { rotX: 0, rotY: 0, zoom: 45 }; 
+        const current = { rotX: 0, rotY: 0, zoom: 45 };
+        
+        let isHandActive = false;
+        let isMouseDown = false;
+        let isAutoRotating = true;
+        
+        // This offset is key to seamless transition between auto-rotate and manual control
+        let rotationOffset = 0; 
+        let handMissingFrames = 0;
+        
+        // ============================================
+        // FOREST CLASS (Optimized)
+        // ============================================
+        class ZenForestGenerator {
+            constructor(c) {
+                this.c = {
+                    count: 65, 
+                    range: 75, 
+                    col: new THREE.Color('#aaddff'), 
+                    ...c
+                };
+                this.pos = []; 
+                this.rnd = []; 
+                this.typ = [];
+                this.sys = null; 
+                this.mat = null;
+            }
+            
+            build(gx, gz, s) {
+                // Trunk lines
+                for(let i = 0; i < 4; i++) {
+                    let a = (i / 4) * 6.28 + Math.random();
+                    let ln = 0.3 * Math.random() + 0.1;
+                    let ht = (5.5 + Math.random() * 2) * s;
+                    
+                    for(let h = 0; h < ht; h += 0.1) {
+                        let w = Math.sin(h * 3) * 0.1; 
+                        this.add(
+                            gx + Math.cos(a) * ln * (h / ht * 1.5) + w, 
+                            h, 
+                            gz + Math.sin(a) * ln * (h / ht * 1.5) + w, 
+                            0
+                        );
+                    }
+                }
+                
+                // Cloud-like leaves
+                const createCloud = (y, r, n) => {
+                    for(let k = 0; k < n; k++) {
+                        let th = Math.random() * 6.28;
+                        let ph = Math.acos(1 - Math.random());
+                        if(Math.random() > 0.7) ph = Math.acos(2 * Math.random() - 1);
+                        
+                        this.add(
+                            gx + Math.sin(ph) * Math.cos(th) * r * s,
+                            y * s + Math.sin(ph) * Math.sin(th) * r * 0.7 * s,
+                            gz + Math.cos(ph) * r * s,
+                            1
+                        );
+                    }
+                };
+                
+                createCloud(3.5, 3.5, 400);
+                createCloud(6.0, 2.5, 300);
+                createCloud(8.0, 1.5, 150);
+            }
+            
+            add(x, y, z, t) { 
+                this.pos.push(x, y, z); 
+                this.typ.push(t); 
+                this.rnd.push(Math.random()); 
+            }
+            
+            gen(constraints) {
+                let cnt = 0, attempts = 0;
+                const grid = new Map();
+                const gridSize = 12;
+                
+                const getGridKey = (x, z) => {
+                    const gx = Math.floor(x / gridSize);
+                    const gz = Math.floor(z / gridSize);
+                    return `${gx},${gz}`;
+                };
+                
+                while(cnt < this.c.count && attempts < 10000) {
+                    attempts++;
+                    let r = this.c.range;
+                    let tx = (Math.random() - 0.5) * 2 * r;
+                    let tz = (Math.random() - 0.5) * 2 * r;
+                    
+                    // Grid check for spacing
+                    if(grid.has(getGridKey(tx, tz))) continue;
+                    
+                    // Avoidance checks
+                    if(Math.hypot(tx - constraints.pavX, tz) < 7.5) continue;
+                    if(Math.hypot(tx - constraints.stX, tz) < 7.0) continue;
+                    if(tx > constraints.bMin && tx < constraints.bMax && Math.abs(tz) < constraints.bW) continue;
+                    
+                    let riverCurve = Math.sin(tz * 0.08) * 4 + Math.sin(tz * 0.2);
+                    if(Math.abs(tx - riverCurve) < 6.0) continue;
+                    
+                    if(Math.hypot(tx, tz) > constraints.outR) continue;
+
+                    this.build(tx, tz, 0.9 + Math.random() * 0.4);
+                    grid.set(getGridKey(tx, tz), true);
+                    cnt++; 
+                    attempts = 0; // Reset attempts on success
+                }
+                
+                console.log(`Placed ${cnt} trees in the forest`);
+                
+                const geometry = new THREE.BufferGeometry();
+                geometry.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3));
+                geometry.setAttribute('aType', new THREE.Float32BufferAttribute(this.typ, 1));
+                geometry.setAttribute('aRnd', new THREE.Float32BufferAttribute(this.rnd, 1));
+                
+                this.mat = new THREE.ShaderMaterial({
+                    uniforms: { 
+                        uTime: { value: 0 }, 
+                        uColor: { value: this.c.col }, 
+                        uAudio: { value: 0 }, 
+                        uSize: { value: 2.0 } 
+                    },
+                    vertexShader: `
+                        uniform float uTime; 
+                        uniform float uAudio; 
+                        uniform float uSize; 
+                        attribute float aType; 
+                        attribute float aRnd; 
+                        varying float vTyp; 
+                        varying float vR;
+                        
+                        void main() { 
+                            vTyp = aType; 
+                            vR = aRnd; 
+                            vec3 p = position;
+                            
+                            // Leaves sway with audio influence
+                            if(aType > 0.5) { 
+                                float sway = sin(uTime * 1.2 + p.z * 0.5 + aRnd * 5.0) * 0.15;
+                                sway *= (1.0 + uAudio * 1.5); 
+                                p.x += sway * p.y * 0.1; 
+                            }
+                            
+                            vec4 mv = modelViewMatrix * vec4(p, 1.0); 
+                            gl_Position = projectionMatrix * mv;
+                            float baseSize = aType < 0.5 ? 1.5 : 2.5;
+                            gl_PointSize = uSize * baseSize * (40.0 / -mv.z) * (1.0 + uAudio * 0.2);
+                        }
+                    `,
+                    fragmentShader: `
+                        uniform vec3 uColor; 
+                        varying float vTyp; 
+                        varying float vR;
+                        
+                        void main() { 
+                            if(length(gl_PointCoord - 0.5) > 0.5) discard; 
+                            vec3 c = uColor; 
+                            if(vTyp < 0.5) c *= 0.6;
+                            gl_FragColor = vec4(c, 1.0 - length(gl_PointCoord - 0.5) * 2.0); 
+                        }
+                    `,
+                    transparent: true, 
+                    blending: THREE.AdditiveBlending, 
+                    depthWrite: false
+                });
+                
+                this.sys = new THREE.Points(geometry, this.mat);
+                return this.sys;
+            }
+            
+            update(t, a) { 
+                if(this.mat) { 
+                    this.mat.uniforms.uTime.value = t; 
+                    this.mat.uniforms.uAudio.value = a; 
+                }
+            }
+            
+            setColor(c) { 
+                if(this.mat) this.mat.uniforms.uColor.value.set(c); 
+            }
+            
+            setSize(s) { 
+                if(this.mat) this.mat.uniforms.uSize.value = s; 
+            }
+        }
+
+        // ============================================
+        // MAIN INITIALIZATION
+        // ============================================
+        async function init() {
+            updateLoader("Initializing 3D Engine...");
+            
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x000000);
+            scene.fog = new THREE.FogExp2(0x000000, 0.015);
+
+            camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 15, 45);
+
+            renderer = new THREE.WebGLRenderer({ 
+                antialias: false, 
+                powerPreference: "high-performance",
+                alpha: true
+            });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+            renderer.outputColorSpace = THREE.SRGBColorSpace;
+            document.body.appendChild(renderer.domElement);
+
+            // Generate scene components
+            updateLoader("Building Architecture...");
+            generateStructure(); 
+            
+            updateLoader("Creating River...");
+            generateRiverOnly();
+            
+            updateLoader("Growing Forest...");
+            forestGen = new ZenForestGenerator({ 
+                count: 80, 
+                range: 100, 
+                col: CONFIG.colForest 
+            });
+            scene.add(forestGen.gen({ 
+                pavX: -7.5, 
+                stX: 8.5, 
+                bMin: -5, 
+                bMax: 6, 
+                bW: 4.0, 
+                outR: 120 
+            }));
+            
+            updateLoader("Adding Atmosphere...");
+            generateSnow();
+
+            // Setup input and tracking
+            updateLoader("Setting up Hand Tracking...");
+            await setupMediaPipe();
+            
+            setupUI();
+            
+            // Hide loader and start animation
+            setTimeout(() => {
+                document.getElementById('loader').style.opacity = '0';
+                setTimeout(() => {
+                    document.getElementById('loader').style.display = 'none';
+                }, 500);
+            }, 1000);
+            
+            animate();
+            
+            // Handle window resize
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function updateLoader(text) {
+            const loader = document.getElementById('loader');
+            if (loader) {
+                loader.innerHTML = text;
+            }
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function generateStructure() {
+            const positions = [], types = [], rands = [];
+            
+            const add = (x, y, z, typ) => {
+                positions.push(x, y, z); 
+                types.push(typ); 
+                rands.push(Math.random()); 
+            };
+            
+            const lerp = (a, b, v) => a + (b - a) * v;
+            
+            // Pavilion (type 0)
+            const pavX = -7.5;
+            
+            // Base
+            for(let y = 0; y < 1.8; y += 0.06) {
+                let rad = y < 0.8 ? 4.2 : 3.4;
+                for(let i = 0; i < 6; i++) {
+                    let a1 = i * 1.047; // Math.PI/3
+                    let a2 = ((i + 1) % 6) * 1.047;
+                    for(let f = 0; f <= 1; f += 0.03) {
+                        add(
+                            pavX + lerp(Math.cos(a1), Math.cos(a2), f) * rad, 
+                            y, 
+                            lerp(Math.sin(a1), Math.sin(a2), f) * rad, 
+                            0
+                        );
+                    }
+                }
+                
+                // Floor
+                if(y > 1.6) {
+                    for(let rr = 0; rr < rad; rr += 0.3) {
+                        for(let a = 0; a < 6.28; a += 0.4) {
+                            add(pavX + Math.cos(a) * rr, y, Math.sin(a) * rr, 0);
+                        }
+                    }
+                }
+            }
+            
+            // Pillars
+            for(let i = 0; i < 6; i++) {
+                let ang = i * 1.047;
+                let cx = pavX + Math.cos(ang) * 3;
+                let cz = Math.sin(ang) * 3;
+                
+                for(let h = 1.8; h < 5.4; h += 0.05) {
+                    for(let k = 0; k < 6.28; k += 1.5) {
+                        add(cx + Math.cos(k) * 0.1, h, cz + Math.sin(k) * 0.1, 0);
+                    }
+                }
+                
+                // Connect pillars
+                let nextAng = ((i + 1) % 6) * 1.047;
+                let cx2 = pavX + Math.cos(nextAng) * 3;
+                let cz2 = Math.sin(nextAng) * 3;
+                
+                for(let f = 0; f <= 1; f += 0.02) {
+                    for(let th = 0; th < 0.25; th += 0.08) {
+                        add(lerp(cx, cx2, f), 5.2 + th, lerp(cz, cz2, f), 0);
+                    }
+                }
+            }
+            
+            // Roof
+            for(let i = 0; i < 80; i++) {
+                let f = i / 80;
+                let y = 5.4 + f * 4;
+                let rd = Math.pow(1 - f, 1.4) * 5.2;
+                if(f < 0.2) rd += Math.pow(0.2 - f, 2) * 25;
+                
+                for(let s = 0; s < 6; s++) {
+                    let a1 = s * 1.047;
+                    let a2 = ((s + 1) % 6) * 1.047;
+                    let x1 = pavX + Math.cos(a1) * rd;
+                    let z1 = Math.sin(a1) * rd;
+                    let x2 = pavX + Math.cos(a2) * rd;
+                    let z2 = Math.sin(a2) * rd;
+                    
+                    let dots = Math.ceil(rd * 4);
+                    for(let k = 0; k <= dots; k++) {
+                        let lx = lerp(x1, x2, k / dots);
+                        let lz = lerp(z1, z2, k / dots);
+                        for(let iw = 0; iw < 0.2; iw += 0.1) {
+                            add(
+                                pavX + (lx - pavX) * (1 - iw / rd * 1.5), 
+                                y + iw * 0.6, 
+                                lz * (1 - iw / rd * 1.5), 
+                                0
+                            );
+                        }
+                    }
+                    
+                    // Ridge highlights
+                    for(let q = 0; q < 3; q++) {
+                        add(x1, y + 0.05, z1, 0);
+                    }
+                }
+            }
+            
+            // Bridge (type 1)
+            for(let x = -4; x <= 5; x += 0.04) {
+                let norm = (x - 0.5) / 4.5;
+                let h = Math.cos(norm * 1.57) * 2.5;
+                if(h < 0) h = 0;
+                
+                // Deck
+                for(let z = -1; z <= 1; z += 0.1) {
+                    add(x, h, z, 1);
+                    add(x, h - 0.2, z, 1);
+                }
+                
+                // Posts
+                if(Math.abs((x * 2.5) % 1) < 0.1) {
+                    for(let ph = 0; ph <= 0.6; ph += 0.06) {
+                        add(x, h + ph, 1, 1);
+                        add(x, h + ph, -1, 1);
+                    }
+                }
+                
+                // Rail
+                add(x, h + 0.6, 1, 1);
+                add(x, h + 0.6, -1, 1);
+            }
+            
+            // Stone (type 2)
+            const stoneX = 8.5;
+            for(let i = 0; i < 50000; i++) {
+                let rx = (Math.random() - 0.5) * 3.5;
+                let ry = Math.random() * 6;
+                let rz = (Math.random() - 0.5) * 3;
+                
+                let d = Math.sqrt(rx * rx * 0.8 + Math.pow(ry - 3, 2) * 0.2 + rz * rz);
+                let noise = Math.sin(rx * 3 + ry) * Math.cos(ry * 2) * Math.sin(rz * 3);
+                let shell = d - (1.4 + noise * 0.6);
+                let holes = Math.sin(rx * 2 + ry * 1.5) * Math.cos(rz * 2);
+                
+                if(shell < 0 && holes > -0.3 && (Math.abs(shell) < 0.2 || Math.random() > 0.8)) {
+                    add(stoneX + rx, ry, rz, 2);
+                }
+            }
+
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            geometry.setAttribute('aInfo', new THREE.Float32BufferAttribute(types, 1));
+            
+            mainMat = new THREE.ShaderMaterial({
+                uniforms: { 
+                    uTime: { value: 0 }, 
+                    uAudio: { value: 0 }, 
+                    uSize: { value: 2.0 }, 
+                    uColPav: { value: CONFIG.colPavilion }, 
+                    uColBri: { value: CONFIG.colBridge }, 
+                    uColStn: { value: CONFIG.colStone }
+                },
+                vertexShader: `
+                    uniform float uTime; 
+                    uniform float uAudio; 
+                    uniform float uSize; 
+                    attribute float aInfo; 
+                    varying float vT;
+                    
+                    void main() { 
+                        vT = aInfo; 
+                        vec3 p = position; 
+                        
+                        // Stone subtle movement
+                        if(abs(aInfo - 2.0) < 0.1) {
+                            p.x += sin(uTime * 10.0 + p.y) * 0.02 * (1.0 + uAudio);
+                        }
+                        
+                        vec4 mv = modelViewMatrix * vec4(p, 1.0); 
+                        gl_Position = projectionMatrix * mv; 
+                        gl_PointSize = uSize * (2.0 + uAudio) * (30.0 / -mv.z); 
+                    }
+                `,
+                fragmentShader: `
+                    uniform vec3 uColPav; 
+                    uniform vec3 uColBri; 
+                    uniform vec3 uColStn; 
+                    varying float vT;
+                    
+                    void main() { 
+                        if(length(gl_PointCoord - 0.5) > 0.5) discard; 
+                        vec3 c = uColPav;
+                        
+                        if(abs(vT - 1.0) < 0.1) c = uColBri;
+                        else if(abs(vT - 2.0) < 0.1) c = uColStn;
+                        
+                        gl_FragColor = vec4(c, 1.0 - length(gl_PointCoord - 0.5) * 2.0); 
+                    }
+                `,
+                transparent: true, 
+                blending: THREE.AdditiveBlending, 
+                depthWrite: false 
+            });
+            
+            scene.add(new THREE.Points(geometry, mainMat));
+        }
+
+        function generateRiverOnly() {
+            const positions = [];
+            
+            // Create river points with S-curve
+            for(let i = 0; i < 400; i++) {
+                let z = (i / 400 - 0.5) * 400;
+                let curve = Math.sin(z * 0.08) * 4 + Math.sin(z * 0.2);
+                
+                for(let j = 0; j < 60; j++) {
+                    positions.push(curve + (Math.random() - 0.5) * 6.6, 0, z);
+                }
+            }
+            
+            riverMat = new THREE.ShaderMaterial({
+                uniforms: {
+                    uTime: { value: 0 }, 
+                    uSize: { value: 2.0 }, 
+                    uColor: { value: CONFIG.colRiver }
+                },
+                vertexShader: `
+                    uniform float uTime; 
+                    uniform float uSize; 
+                    
+                    void main() { 
+                        vec3 p = position; 
+                        float curve = sin(p.z * 0.08) * 4.0 + sin(p.z * 0.2);
+                        
+                        // Only keep points near the river curve
+                        if(abs(p.x - curve) > 2.2) {
+                            gl_Position = vec4(0);
+                            return;
+                        }
+                        
+                        // Water flow animation
+                        p.y = sin(p.x * 0.5 + p.z * 0.1 - uTime * 2.0) * 0.5;
+                        
+                        vec4 mv = modelViewMatrix * vec4(p, 1.0); 
+                        gl_Position = projectionMatrix * mv; 
+                        gl_PointSize = uSize * 4.0 * (40.0 / -mv.z);
+                    }
+                `,
+                fragmentShader: `
+                    uniform vec3 uColor; 
+                    
+                    void main() { 
+                        if(length(gl_PointCoord - 0.5) > 0.5) discard; 
+                        gl_FragColor = vec4(uColor + vec3(0.3, 0.3, 0), 1.0 - length(gl_PointCoord - 0.5) * 2.0);
+                    }
+                `,
+                transparent: true, 
+                blending: THREE.AdditiveBlending, 
+                depthWrite: false
+            });
+            
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            scene.add(new THREE.Points(geometry, riverMat));
+        }
+
+        function generateSnow() {
+            const count = 1500;
+            const positions = new Float32Array(count * 3);
+            
+            for(let i = 0; i < count; i++) {
+                positions[i * 3] = (Math.random() - 0.5) * 120;
+                positions[i * 3 + 1] = Math.random() * 60;
+                positions[i * 3 + 2] = (Math.random() - 0.5) * 120;
+            }
+            
+            const material = new THREE.PointsMaterial({
+                color: 0xffffff, 
+                size: 0.25, 
+                transparent: true, 
+                opacity: 0.6, 
+                blending: THREE.AdditiveBlending, 
+                depthWrite: false
+            });
+            
+            const system = new THREE.Points(
+                new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(positions, 3)), 
+                material
+            );
+            scene.add(system);
+            
+            // Store reference for animation
+            window.snowSystem = system;
+        }
+
+        // ============================================
+        // UI & INPUT HANDLING
+        // ============================================
+        function setupUI() {
+            // Panel toggle
+            const togglePanel = () => {
+                const container = document.getElementById('controls-container');
+                const btn = document.getElementById('toggle-btn');
+                container.classList.toggle('collapsed');
+                btn.innerText = container.classList.contains('collapsed') ? "+" : "–";
+            };
+            
+            // 绑定按钮点击事件
+            document.getElementById('toggle-btn').addEventListener('click', togglePanel);
+            
+            // 如果需要暴露给全局，可以保留
+            window.togglePanel = togglePanel;
+            
+            // Bind color controls
+            const bindColor = (id, fn) => {
+                const el = document.getElementById(id);
+                if(el) el.addEventListener('input', e => fn(e.target.value));
+            };
+            
+            bindColor('c-forest', v => forestGen.setColor(v));
+            bindColor('c-river', v => riverMat.uniforms.uColor.value.set(v));
+            bindColor('c-pavilion', v => mainMat.uniforms.uColPav.value.set(v));
+            bindColor('c-bridge', v => mainMat.uniforms.uColBri.value.set(v));
+            bindColor('c-stone', v => mainMat.uniforms.uColStn.value.set(v));
+            
+            // Global Size Control
+            document.getElementById('size-range').addEventListener('input', e => {
+                const size = parseFloat(e.target.value);
+                if(forestGen) forestGen.setSize(size);
+                if(mainMat) mainMat.uniforms.uSize.value = size;
+                if(riverMat) riverMat.uniforms.uSize.value = size;
+            });
+
+            // Audio handling
+            document.getElementById('btnMusic').addEventListener('click', () => {
+                document.getElementById('file-input').click();
+            });
+            
+            document.getElementById('file-input').addEventListener('change', async (e) => {
+                if(e.target.files[0]) {
+                    try {
+                        // Clean up previous audio
+                        if(audioSource) {
+                            audioSource.pause();
+                            URL.revokeObjectURL(audioSource.src);
+                        }
+                        
+                        if(audioCtx && audioCtx.state !== 'closed') {
+                            audioCtx.close();
+                        }
+                        
+                        // Create new audio context
+                        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                        analyser = audioCtx.createAnalyser();
+                        analyser.fftSize = 256;
+                        
+                        const fileURL = URL.createObjectURL(e.target.files[0]);
+                        audioSource = new Audio(fileURL);
+                        audioSource.loop = true;
+                        
+                        const sourceNode = audioCtx.createMediaElementSource(audioSource);
+                        sourceNode.connect(analyser);
+                        analyser.connect(audioCtx.destination);
+                        
+                        dataArr = new Uint8Array(analyser.frequencyBinCount);
+                        
+                        // Try to play
+                        await audioSource.play();
+                        console.log("Audio started successfully");
+                    } catch (error) {
+                        console.warn("Audio playback failed:", error);
+                        alert("Click the scene to start audio (browser autoplay policy)");
+                    }
+                }
+            });
+            
+            // Reset button
+            document.getElementById('btnReset').addEventListener('click', () => {
+                target.rotX = 0; 
+                target.rotY = 0; 
+                target.zoom = 45;
+                rotationOffset = 0;
+                isAutoRotating = true;
+            });
+            
+            // Fullscreen
+            document.getElementById('btnFullscreen').addEventListener('click', () => {
+                if (!document.fullscreenElement) {
+                    document.documentElement.requestFullscreen();
+                } else {
+                    document.exitFullscreen();
+                }
+            });
+
+            // --- Mouse Interaction ---
+            window.addEventListener('mousedown', (e) => {
+                // Don't capture clicks on controls
+                if(e.target.closest('#controls-container')) return;
+                
+                isMouseDown = true;
+                isAutoRotating = false;
+                
+                // Calculate offset for smooth transition
+                let currentInput = -(e.clientX / window.innerWidth - 0.5) * 3.5;
+                rotationOffset = target.rotX - currentInput;
+            });
+            
+            window.addEventListener('mouseup', () => { 
+                isMouseDown = false;
+                if(!isHandActive) {
+                    isAutoRotating = true;
+                }
+            });
+            
+            window.addEventListener('mousemove', e => {
+                if(isMouseDown) {
+                    let inputX = -(e.clientX / window.innerWidth - 0.5) * 3.5;
+                    target.rotX = inputX + rotationOffset;
+                    target.rotY = -(e.clientY / window.innerHeight - 0.5) * 1.5;
+                }
+            });
+            
+            window.addEventListener('wheel', e => {
+                target.zoom += e.deltaY * 0.05;
+                target.zoom = Math.max(CONFIG.minZoom, Math.min(CONFIG.maxZoom, target.zoom));
+            });
+            
+            // Touch support for mobile
+            if('ontouchstart' in window) {
+                let touchStartX, touchStartY;
+                
+                window.addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                    touchStartX = e.touches[0].clientX;
+                    touchStartY = e.touches[0].clientY;
+                    isMouseDown = true;
+                    isAutoRotating = false;
+                });
+                
+                window.addEventListener('touchmove', (e) => {
+                    if(isMouseDown) {
+                        e.preventDefault();
+                        const touchX = e.touches[0].clientX;
+                        const touchY = e.touches[0].clientY;
+                        
+                        target.rotX += (touchX - touchStartX) * 0.01;
+                        target.rotY += (touchY - touchStartY) * 0.01;
+                        
+                        touchStartX = touchX;
+                        touchStartY = touchY;
+                    }
+                });
+                
+                window.addEventListener('touchend', () => {
+                    isMouseDown = false;
+                    if(!isHandActive) {
+                        isAutoRotating = true;
+                    }
+                });
+            }
+        }
+
+        // ============================================
+        // MEDIAPIPE HAND TRACKING
+        // ============================================
+        async function setupMediaPipe() {
+            const videoElement = document.querySelector('.input_video');
+            const handStatus = document.getElementById('hand-status');
+            
+            try {
+                // Initialize MediaPipe Hands
+                const hands = new self.Hands({
+                    locateFile: (file) => {
+                        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+                    }
+                });
+                
+                hands.setOptions({
+                    maxNumHands: 1,
+                    modelComplexity: 1,
+                    minDetectionConfidence: 0.6,
+                    minTrackingConfidence: 0.6,
+                    selfieMode: true
+                });
+                
+                hands.onResults((results) => {
+                    if(results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                        handMissingFrames = 0;
+                        
+                        if(!isHandActive) {
+                            // First frame with hand - calculate offset for smooth transition
+                            isHandActive = true;
+                            isAutoRotating = false;
+                            let hand = results.multiHandLandmarks[0];
+                            let inputX = (0.5 - hand[9].x) * 3.5;
+                            rotationOffset = target.rotX - inputX;
+                        }
+                        
+                        let hand = results.multiHandLandmarks[0];
+                        let inputX = (0.5 - hand[9].x) * 3.5;
+                        
+                        target.rotX = inputX + rotationOffset;
+                        target.rotY = (hand[9].y - 0.5) * 1.5;
+                        
+                        handStatus.innerText = "Hand: Active ✓";
+                        handStatus.style.color = "#00ffff";
+                    } else {
+                        handMissingFrames++;
+                        if(handMissingFrames > 20) {
+                            isHandActive = false;
+                            if(!isMouseDown) {
+                                isAutoRotating = true;
+                            }
+                            handStatus.innerText = "Hand: Not Detected";
+                            handStatus.style.color = "#888";
+                        }
+                    }
+                });
+                
+                // Setup camera
+                const camera = new self.Camera(videoElement, {
+                    onFrame: async () => {
+                        await hands.send({ image: videoElement });
+                    },
+                    width: 320,
+                    height: 240
+                });
+                
+                await camera.start();
+                handStatus.innerText = "Hand: Ready ✓";
+                handStatus.style.color = "#00ffff";
+                
+            } catch (error) {
+                console.error("MediaPipe setup failed:", error);
+                handStatus.innerText = "Hand: Disabled (Use Mouse)";
+                handStatus.style.color = "#ff5555";
+            }
+        }
+
+        // ============================================
+        // ANIMATION LOOP
+        // ============================================
+        function animate() {
+            requestAnimationFrame(animate);
+            time += 0.006;
+            
+            // === AUTO ROTATION LOGIC ===
+            if(isAutoRotating && !isHandActive && !isMouseDown) {
+                target.rotX += CONFIG.autoSpeed;
+                // Smoothly return pitch to neutral
+                target.rotY += (0 - target.rotY) * 0.05;
+            }
+            
+            // Smooth camera interpolation
+            current.rotX += (target.rotX - current.rotX) * 0.1;
+            current.rotY += (target.rotY - current.rotY) * 0.1;
+            current.zoom += (target.zoom - current.zoom) * 0.1;
+
+            // Update camera position
+            camera.position.x = Math.sin(current.rotX) * current.zoom;
+            camera.position.z = Math.cos(current.rotX) * current.zoom;
+            camera.position.y = 15 + current.rotY * 10;
+            camera.lookAt(0, 5, 0);
+
+            // Audio analysis
+            if(analyser && audioSource && !audioSource.paused) {
+                analyser.getByteFrequencyData(dataArr);
+                audioLevel = dataArr[4] / 255.0;
+                audioLevel = Math.min(1.0, audioLevel * 1.5);
+            } else {
+                audioLevel = Math.max(0, audioLevel - 0.02);
+            }
+
+            // Update shader uniforms
+            if(mainMat) {
+                mainMat.uniforms.uTime.value = time;
+                mainMat.uniforms.uAudio.value = audioLevel;
+            }
+            
+            if(riverMat) {
+                riverMat.uniforms.uTime.value = time;
+            }
+            
+            if(forestGen) {
+                forestGen.update(time, audioLevel);
+            }
+            
+            // Update snow animation
+            if(window.snowSystem) {
+                const arr = window.snowSystem.geometry.attributes.position.array;
+                for(let i = 1; i < arr.length; i += 3) {
+                    arr[i] -= 0.1;
+                    if(arr[i] < 0) arr[i] = 60;
+                }
+                window.snowSystem.geometry.attributes.position.needsUpdate = true;
+            }
+            
+            renderer.render(scene, camera);
+        }
+        
+        // Start the application
+        init().catch(error => {
+            console.error("Initialization failed:", error);
+            document.getElementById('loader').innerHTML = "Error: " + error.message;
+            document.getElementById('loader').style.color = "#ff5555";
+        });
+    </script>
+</body>
+</html>
